@@ -12,24 +12,24 @@ module SecureRemotePassword
     _b = "8143e2f299852a05717427ea9d87c6146e747d0da6e95f4390264e55a43ae96"
 
     it "should generate A from random a" do
-      srp = Client.new(1024)
+      srp = Client.new(1024, :sha1)
       aa1 = SRP.to_big_int srp.start_authentication
       aa1.to_s(2).size.should be >= 1000
-      srp = Client.new(1024)
+      srp = Client.new(1024, :sha1)
       aa2 = SRP.to_big_int srp.start_authentication
       aa2.to_s(2).size.should be >= 1000
       aa1.should_not eq aa2
     end
 
     it "should calculate A" do
-      srp = Client.new(1024)
+      srp = Client.new(1024, :sha1)
       srp.set_a SRP.to_big_int(a)
       aa = srp.start_authentication
       aa.should eq "165366e23a10006a62fb8a0793757a299e2985103ad2e8cdee0cc37cac109f3f338ee12e2440eda97bfa7c75697709a5dc66faadca7806d43ea5839757d134ae7b28dd3333049198cc8d328998b8cd8352ff4e64b3bd5f08e40148d69b0843bce18cbbb30c7e4760296da5c92717fcac8bddc7875f55302e55d90a34226868d2"
     end
 
     it "should calculate client session and key" do
-      srp = Client.new(1024)
+      srp = Client.new(1024, :sha1)
       srp.set_a SRP.to_big_int(a)
       srp.start_authentication # created in phase 1
       bb = "56777d24af1121bd6af6aeb84238ff8d250122fe75ed251db0f47c289642ae7adb9ef319ce3ab23b6ecc97e5904749fc42f12bb016ecf39691db541f066667b8399bfa685c82b03ad8f92f75975ed086dbe0d470d4dd907ce11b19ee41b74aee72bd8445cde6b58c01f678e39ed9cd6b93c79382637df90777a96c10a768c510"
@@ -45,7 +45,7 @@ module SecureRemotePassword
   context "authentication" do
     username = "leonardo"
     password = "icnivad"
-    auth = Verifier.new(1024).generate_userauth(username, password)
+    auth = Verifier.new(1024, :sha1).generate_userauth(username, password)
     # imitate database persistance layer
     _user_name = username
     _user = {
@@ -54,8 +54,8 @@ module SecureRemotePassword
     }
 
     it "should authenticate" do
-      client = Client.new(1024)
-      verifier = Verifier.new(1024)
+      client = Client.new(1024, :sha1)
+      verifier = Verifier.new(1024, :sha1)
       # phase 1
       # (client)
       aa = client.start_authentication
@@ -76,8 +76,8 @@ module SecureRemotePassword
     end
 
     it "should not authenticate" do
-      client = Client.new(1024)
-      verifier = Verifier.new(1024)
+      client = Client.new(1024, :sha1)
+      verifier = Verifier.new(1024, :sha1)
       # phase 1
       # (client)
       aa = client.start_authentication
@@ -97,7 +97,7 @@ module SecureRemotePassword
 
     it "should be applied in async authentication with stateless server" do
       # client generates A and begins authentication process
-      client = Client.new(1024)
+      client = Client.new(1024, :sha1)
       aa = client.start_authentication
 
       #
@@ -110,7 +110,7 @@ module SecureRemotePassword
       salt = _user[:salt]
 
       # server generates B, saves A and B to database
-      srp = Verifier.new(1024)
+      srp = Verifier.new(1024, :sha1)
       _session = srp.get_challenge_and_proof(username, v, salt, aa).not_nil!
       _session[:challenge][:B].should eq srp.big_b
       _session[:challenge][:salt].should eq salt
@@ -140,7 +140,7 @@ module SecureRemotePassword
       #
 
       # retrive session from database
-      srp = Verifier.new(1024)
+      srp = Verifier.new(1024, :sha1)
       verification = srp.verify_session(_user_session_proof, client_m)
       verification.should_not be_nil
 

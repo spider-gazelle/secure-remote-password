@@ -1,29 +1,60 @@
 require "digest/sha1"
+require "digest/sha512"
 require "random"
 require "big"
 
-module SecureRemotePassword::SRP
-  extend self
+class SecureRemotePassword::SRP
+  enum Algorithm
+    SHA1
+    SHA512
+  end
 
-  def to_big_int(hexbytes : String)
+  def initialize(@algorithm : Algorithm = Algorithm::SHA512, salt_size : Int32? = nil)
+    @salt_size = salt_size || case @algorithm
+    in .sha1?
+      10
+    in .sha512?
+      16
+    end
+  end
+
+  getter salt_size : Int32
+
+  def self.to_big_int(hexbytes : String)
     BigInt.new hexbytes, base: 16
   end
 
-  def sha1_hex(h : Bytes) : String
-    Digest::SHA1.digest(h).hexstring
+  def to_big_int(hexbytes : String)
+    SRP.to_big_int(hexbytes)
   end
 
-  def sha1_hex(h : String) : String
-    h = "#{h}0" if h.size % 2 > 0
-    sha1_hex(h.hexbytes)
+  def hash_hex(h : Bytes) : String
+    case @algorithm
+    in .sha1?
+      Digest::SHA1.digest(h).hexstring
+    in .sha512?
+      Digest::SHA512.digest(h).hexstring
+    end
   end
 
-  def sha1_string(string : String) : String
-    sha1_hex(string.to_slice)
+  def hash_hex(h : String) : String
+    case @algorithm
+    in .sha1?
+      # ruby auto pads hex strings on the right hand side, changing the number
+      # not sure if this is intentional for SRP (I copied the Ruby specs)
+      h = "#{h}0" if h.size % 2 > 0
+    in .sha512?
+      h = "0#{h}" if h.size % 2 > 0
+    end
+    hash_hex(h.hexbytes)
   end
 
-  def sha1(h : Bytes | String) : BigInt
-    to_big_int sha1_hex(h)
+  def hash_string(string : String) : String
+    hash_hex(string.to_slice)
+  end
+
+  def hash(h : Bytes | String) : BigInt
+    hash_hex(h).to_big_i(16)
   end
 
   def bigrand_hex(bytes : Int) : String
@@ -31,11 +62,11 @@ module SecureRemotePassword::SRP
   end
 
   def bigrand(bytes : Int) : BigInt
-    to_big_int bigrand_hex(bytes)
+    bigrand_hex(bytes).to_big_i(16)
   end
 
   # a^n (mod m)
-  def modpow(a, n, m)
+  def modpow(a : BigInt, n : BigInt, m : BigInt)
     r = 1
     loop do
       r = r * a % m if n.bit(0) == 1
@@ -45,7 +76,16 @@ module SecureRemotePassword::SRP
     end
   end
 
-  # SHA1 hashing function with padding.
+  def h_no_pad(n : BigInt, *a) : BigInt
+    hashin = a.compact_map { |s|
+      next unless s
+      s.is_a?(String) ? s : s.to_s(16)
+    }.join
+
+    hash(hashin) % n
+  end
+
+  # SHA1 hashing function with padding, no padding on newer alg
   # Input is prefixed with 0 to meet N hex width.
   def h(n : BigInt, *a) : BigInt
     nlen = 2 * (BigInt.new(n.to_s(16).size * 4 + 7) >> 3)
@@ -58,7 +98,7 @@ module SecureRemotePassword::SRP
       padding = "0" * (nlen - shex.size)
       "#{padding}#{shex}"
     }.join
-    sha1(hashin) % n
+    hash(hashin) % n
   end
 
   # Multiplier parameter
@@ -71,7 +111,7 @@ module SecureRemotePassword::SRP
   # x = H(salt || H(username || ':' || password))
   def calc_x(username : String, password : String, salt : String) : BigInt
     spad = salt.bytesize.odd? ? '0' : nil
-    sha1("#{spad}#{salt}#{sha1_string("#{username}:#{password}")}")
+    hash("#{spad}#{salt}#{hash_string("#{username}:#{password}")}")
   end
 
   # Random scrambling parameter
@@ -110,17 +150,28 @@ module SecureRemotePassword::SRP
 
   # M = H(H(N) xor H(g), H(I), s, A, B, K)
   def calc_m(username : String, xsalt : String, xaa, xbb, xkk, n : BigInt, g : BigInt) : BigInt
-    hn = sha1(n.to_s(16))
-    hg = sha1(g.to_s(16))
+    hn = hash(n.to_s(16))
+    hg = hash(g.to_s(16))
     hxor = (hn ^ hg).to_s(16)
-    hi = sha1_string(username)
+    hi = hash_string(username)
 
-    h(n, hxor, hi, xsalt, xaa, xbb, xkk)
+    # Differences in padding requirements?
+    case @algorithm
+    in .sha1?
+      h(n, hxor, hi, xsalt, xaa, xbb, xkk)
+    in .sha512?
+      h_no_pad(n, hxor, hi, xsalt, xaa, xbb, xkk)
+    end
   end
 
   # H(A, M, K)
-  def calc_h_amk(xaa, xmm, xkk, n, g)
-    h(n, xaa, xmm, xkk)
+  def calc_h_amk(xaa, xmm, xkk, n)
+    case @algorithm
+    in .sha1?
+      h(n, xaa, xmm, xkk)
+    in .sha512?
+      h_no_pad(n, xaa, xmm, xkk)
+    end
   end
 
   def ng(group : Int) : Tuple(BigInt, BigInt)
