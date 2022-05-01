@@ -3,66 +3,75 @@ require "digest/sha512"
 require "random"
 require "big"
 
-class SecureRemotePassword::SRP
-  enum Algorithm
-    SHA1
-    SHA512
+module SecureRemotePassword::Helpers
+  # Calculate k = H(N || g), which is used throughout various SRP calculations.
+  def calculate_k : BigInt
+    padded_hash(@arg_N.to_s(16), @arg_g.to_s(16))
   end
 
-  def initialize(@algorithm : Algorithm = Algorithm::SHA512, salt_size : Int32? = nil)
-    @salt_size = salt_size || case @algorithm
-    in .sha1?
-      10
-    in .sha512?
-      16
-    end
+  # Calculate x = SHA1(s | SHA1(I | ":" | P))
+  def calculate_x(salt : String)
+    pad = salt.bytesize.odd? ? '0' : nil
+    hash("#{pad}#{salt}#{hash_string("#{@username}:#{@password}")}")
   end
 
-  getter salt_size : Int32
-
-  def self.to_big_int(hexbytes : String)
-    BigInt.new hexbytes, base: 16
+  # Calculate v = g^x % N
+  def calculate_v(salt : String)
+    modpow(arg_g, calculate_x(salt), arg_N)
   end
 
-  def to_big_int(hexbytes : String)
-    SRP.to_big_int(hexbytes)
+  # Calculate u = SHA1(PAD(A) | PAD(B)), which serves
+  # to prevent an attacker who learns a user's verifier
+  # from being able to authenticate as that user.
+  def calculate_u(arg_A, arg_B)
+    padded_hash(arg_N, arg_A, arg_B)
   end
 
-  def hash_hex(h : Bytes) : String
+  # Calculate the client's public value A = g^a % N
+  # where param 'a' is a random number at least 256 bits in length
+  def calculate_A(a : BigInt)
+    raise "Client key length is less than 256 bits." unless (a.bit_length / 8 >= 256 / 8)
+    big_A = modpow(arg_g, a, arg_N)
+    raise "ABORT: illegal_parameter a" if big_A % arg_N == 0
+    big_A
+  end
+
+  # Calculate the server's public value B
+  # B = g^b + k v (mod N)
+  def calculate_B(b, v)
+    (modpow(arg_g, b, arg_N) + arg_k * v) % arg_N
+  end
+
+  # Client secret
+  # S = (B - (k * g^x)) ^ (a + (u * x)) % N
+  def calculate_client_S(big_B, salt, uu, aa)
+    raise "ABORT: illegal_parameter B" if big_B % arg_N == 0
+    x = calculate_x(salt)
+    modpow((big_B - arg_k * modpow(arg_g, x, arg_N)) % arg_N, (aa + x * uu), arg_N)
+  end
+
+  # Server secret
+  # S = (A * v^u) ^ b % N
+  def calculate_server_S(big_A, v, u, big_B)
+    raise "ABORT: illegal_parameter A" if big_A % arg_N == 0
+    raise "ABORT: illegal_parameter B" if big_B % arg_N == 0
+    modpow((modpow(v, u, arg_N) * big_A), big_B, arg_N)
+  end
+
+  # M = H(H(N) xor H(g), H(I), s, A, B, K)
+  def calculate_M(xsalt : String, xaa, xbb, xkk) : BigInt
+    hn = hash(@arg_N.to_s(16))
+    hg = hash(@arg_g.to_s(16))
+    hxor = (hn ^ hg).to_s(16)
+    hi = hash_string(@username)
+
+    # Differences in padding requirements for apples extension
     case @algorithm
     in .sha1?
-      Digest::SHA1.digest(h).hexstring
+      padded_hash(hxor, hi, xsalt, xaa, xbb, xkk)
     in .sha512?
-      Digest::SHA512.digest(h).hexstring
+      no_padding_hash(hxor, hi, xsalt, xaa, xbb, xkk)
     end
-  end
-
-  def hash_hex(h : String) : String
-    case @algorithm
-    in .sha1?
-      # ruby auto pads hex strings on the right hand side, changing the number
-      # not sure if this is intentional for SRP (I copied the Ruby specs)
-      h = "#{h}0" if h.size % 2 > 0
-    in .sha512?
-      h = "0#{h}" if h.size % 2 > 0
-    end
-    hash_hex(h.hexbytes)
-  end
-
-  def hash_string(string : String) : String
-    hash_hex(string.to_slice)
-  end
-
-  def hash(h : Bytes | String) : BigInt
-    hash_hex(h).to_big_i(16)
-  end
-
-  def bigrand_hex(bytes : Int) : String
-    Random.new.random_bytes(bytes).hexstring
-  end
-
-  def bigrand(bytes : Int) : BigInt
-    bigrand_hex(bytes).to_big_i(16)
   end
 
   # a^n (mod m)
@@ -76,20 +85,32 @@ class SecureRemotePassword::SRP
     end
   end
 
-  def h_no_pad(n : BigInt, *a) : BigInt
-    hashin = a.compact_map { |s|
-      next unless s
-      s.is_a?(String) ? s : s.to_s(16)
-    }.join
-
-    hash(hashin) % n
+  def hash_hex(bytes : Bytes) : String
+    case @algorithm
+    in .sha1?
+      Digest::SHA1.digest(bytes).hexstring
+    in .sha512?
+      Digest::SHA512.digest(bytes).hexstring
+    end
   end
 
-  # SHA1 hashing function with padding, no padding on newer alg
-  # Input is prefixed with 0 to meet N hex width.
-  def h(n : BigInt, *a) : BigInt
-    nlen = 2 * (BigInt.new(n.to_s(16).size * 4 + 7) >> 3)
-    hashin = a.compact_map { |s|
+  def hash_hex(hex_string : String) : String
+    # hexbytes raises an error if there are not an even number of nibbles
+    hex_string = "0#{hex_string}" if hex_string.size.odd?
+    hash_hex(hex_string.hexbytes)
+  end
+
+  def hash_string(string : String) : String
+    hash_hex(string.to_slice)
+  end
+
+  def hash(h : Bytes | String) : BigInt
+    hash_hex(h).to_big_i(16)
+  end
+
+  def padded_hash(*parts) : BigInt
+    nlen = 2 * (BigInt.new(arg_N.to_s(16).size * 4 + 7) >> 3)
+    hashin = parts.compact_map { |s|
       next unless s
       shex = s.is_a?(String) ? s : s.to_s(16)
       if shex.size > nlen
@@ -98,83 +119,20 @@ class SecureRemotePassword::SRP
       padding = "0" * (nlen - shex.size)
       "#{padding}#{shex}"
     }.join
-    hash(hashin) % n
+
+    hash(hashin) % arg_N
   end
 
-  # Multiplier parameter
-  # k = H(N, g)   (in SRP-6a)
-  def calc_k(n, g)
-    h(n, n, g)
+  def no_padding_hash(*a) : BigInt
+    hashin = a.compact_map { |s|
+      next unless s
+      s.is_a?(String) ? s : s.to_s(16)
+    }.join
+
+    hash(hashin) % arg_N
   end
 
-  # Private key (derived from username, raw password and salt)
-  # x = H(salt || H(username || ':' || password))
-  def calc_x(username : String, password : String, salt : String) : BigInt
-    spad = salt.bytesize.odd? ? '0' : nil
-    hash("#{spad}#{salt}#{hash_string("#{username}:#{password}")}")
-  end
-
-  # Random scrambling parameter
-  # u = H(A, B)
-  def calc_u(xaa, xbb, n)
-    h(n, xaa, xbb)
-  end
-
-  # Password verifier
-  # v = g^x (mod N)
-  def calc_v(x, n, g)
-    modpow(g, x, n)
-  end
-
-  # A = g^a (mod N)
-  def calc_a(a, n, g)
-    modpow(g, a, n)
-  end
-
-  # B = g^b + k v (mod N)
-  def calc_b(b, k, v, n, g)
-    (modpow(g, b, n) + k * v) % n
-  end
-
-  # Client secret
-  # S = (B - (k * g^x)) ^ (a + (u * x)) % N
-  def calc_client_s(bb, a, k, x, u, n, g)
-    modpow((bb - k * modpow(g, x, n)) % n, (a + x * u), n)
-  end
-
-  # Server secret
-  # S = (A * v^u) ^ b % N
-  def calc_server_s(aa, b, v, u, n)
-    modpow((modpow(v, u, n) * aa), b, n)
-  end
-
-  # M = H(H(N) xor H(g), H(I), s, A, B, K)
-  def calc_m(username : String, xsalt : String, xaa, xbb, xkk, n : BigInt, g : BigInt) : BigInt
-    hn = hash(n.to_s(16))
-    hg = hash(g.to_s(16))
-    hxor = (hn ^ hg).to_s(16)
-    hi = hash_string(username)
-
-    # Differences in padding requirements?
-    case @algorithm
-    in .sha1?
-      h(n, hxor, hi, xsalt, xaa, xbb, xkk)
-    in .sha512?
-      h_no_pad(n, hxor, hi, xsalt, xaa, xbb, xkk)
-    end
-  end
-
-  # H(A, M, K)
-  def calc_h_amk(xaa, xmm, xkk, n)
-    case @algorithm
-    in .sha1?
-      h(n, xaa, xmm, xkk)
-    in .sha512?
-      h_no_pad(n, xaa, xmm, xkk)
-    end
-  end
-
-  def ng(group : Int) : Tuple(BigInt, BigInt)
+  def initialization_value(group : Int) : Tuple(BigInt, BigInt)
     case group
     when 1024
       n = to_big_int %w{
@@ -329,5 +287,13 @@ class SecureRemotePassword::SRP
     end
 
     {n, g}
+  end
+
+  def random_hex(bytes : Int) : String
+    Random.new.random_bytes(bytes).hexstring
+  end
+
+  def random_big_int(bytes : Int) : BigInt
+    bigrand_hex(bytes).to_big_i(16)
   end
 end

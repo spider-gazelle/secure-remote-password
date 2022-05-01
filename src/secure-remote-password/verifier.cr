@@ -30,7 +30,7 @@ class SecureRemotePassword::Verifier
   def generate_userauth(username, password)
     x = @srp.calc_x(username, password, salt)
     v = @srp.calc_v(x, @n, @g)
-    {username: username, verifier: v.to_s(16), salt: salt}
+    {username: username, verifier: v.to_hex_string, salt: salt}
   end
 
   # Authentication phase 1 - create challenge.
@@ -43,7 +43,7 @@ class SecureRemotePassword::Verifier
     {
       challenge: {:B => @big_b, :salt => xsalt},
       proof:     {
-        A: xaa, B: @big_b, b: @b.to_s(16),
+        A: xaa, B: @big_b, b: @b.to_hex_string,
         I: username, s: xsalt, v: xverifier,
       },
     }
@@ -66,15 +66,15 @@ class SecureRemotePassword::Verifier
     return nil if u == 0
 
     # calculate session key
-    @s = srp.calc_server_s(srp.to_big_int(@a), @b, v, u, @n).to_s(16)
+    @s = srp.calc_server_s(srp.to_big_int(@a), @b, v, u, @n).to_hex_string
     @big_k = srp.hash_hex(@s)
 
     # calculate match
-    @m = srp.calc_m(username, xsalt, @a, @big_b, @big_k, @n, @g).to_s(16)
+    @m = srp.calc_m(username, xsalt, @a, @big_b, @big_k, @n, @g).to_hex_string
 
     if @m == client_m
       # authentication succeeded
-      @h_amk = srp.calc_h_amk(@a, @m, @big_k, @n).to_s(16)
+      @h_amk = srp.calc_h_amk(@a, @m, @big_k, @n).to_hex_string
       return @h_amk
     end
     nil
@@ -84,6 +84,6 @@ class SecureRemotePassword::Verifier
   # input verifier in hex
   def generate_b(xverifier : String)
     v = SRP.to_big_int(xverifier)
-    @big_b = @srp.calc_b(@b, k, v, @n, @g).to_s(16)
+    @big_b = @srp.calc_b(@b, k, v, @n, @g).to_hex_string
   end
 end
