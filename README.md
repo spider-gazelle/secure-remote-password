@@ -10,11 +10,13 @@ Unlike other common challenge-response autentication protocols, such as Kerberos
 
 ## HomeKit Accessory Protocol Specification (HAP)
 
-Additional classes for handling HomeKit are included, these changes are made to the SRP protocol:
+HomeKit authentication is supported when using SHA-512, these changes are made to the SRP protocol:
 
 - SHA-512 is used as the hash function, replacing SHA-1
 - The Modulus, N, and Generator, g, are specified by the 3072-bit group of [RFC 5054](https://tools.ietf.org/html/rfc5054)
 - The match, M, hash calculation is not padded
+
+These changes improve security and are used as defaults
 
 ## References
 
