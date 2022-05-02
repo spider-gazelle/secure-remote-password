@@ -65,6 +65,7 @@ module SecureRemotePassword::Helpers
   end
 
   # M = H(H(N) xor H(g), H(I), s, A, B, K)
+  # NOTE:: overwrite what is hashed here if your implementation differs
   def calculate_M(username : String, salt : String, xaa, xbb, xkk) : BigInt
     hn = hash(@arg_N.to_s(16))
     hg = hash(@arg_g.to_s(16))
