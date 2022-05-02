@@ -56,11 +56,11 @@ module SecureRemotePassword
       C2B2EA2C 3E6AC866 09EA058A 9DA8CC63 531DC915 414DF568 B09482DD AC1954DE
       C7EB714F 6FF7D44C D5B86F6B D1158109 30637C01 D0F6013B C9740FA2 C633BA89
     }.join.downcase
-    u = %w{
+    _u = %w{
       03AE5F3C 3FA9EFF1 A50D7DBB 8D2F60A1 EA66EA71 2D50AE97 6EE34641 A1CD0E51
       C4683DA3 83E8595D 6CB56A15 D5FBC754 3E07FBDD D316217E 01A391A1 8EF06DFF
     }.join.downcase
-    premaster_secret = %w{
+    _premaster_secret = %w{
       F1036FEC D017C823 9C0D5AF7 E0FCF0D4 08B009E3 6411618A 60B23AAB BFC38339
       72682312 14BAACDC 94CA1C53 F442FB51 C1B027C3 18AE238E 16414D60 D1881B66
       486ADE10 ED02BA33 D098F6CE 9BCF1BB0 C46CA2C4 7F2F174C 59A9C61E 2560899B
@@ -74,7 +74,7 @@ module SecureRemotePassword
       78954F6A 8E68D45B 85A88E4E BFEC1336 8EC0891C 3BC86CF5 00978801 78D86135
       E7287234 58538858 D715B7B2 47406222 C1019F53 603F0169 52D49710 0858824C
     }.join.downcase
-    session_key = %w{
+    _session_key = %w{
       5CBC219D B052138E E1148C71 CD449896 3D682549 CE91CA24 F098468F 06015BEB
       6AF245C2 093F98C3 651BCA83 AB8CAB2B 580BBF02 184FEFDF 26142F73 DF95AC50
     }.join.downcase
@@ -91,7 +91,7 @@ module SecureRemotePassword
       describe "#generate_userauth" do
         it "returns hash containing username" do
           srp_verifier = Verifier.new(3072, :sha512)
-          subject = srp_verifier.generate_userauth(username, password)
+          subject = srp_verifier.generate_user_verifier(username, password)
           subject[:username]?.should be_truthy
           subject[:verifier]?.should be_truthy
           subject[:salt].size.should be >= 31
@@ -101,40 +101,33 @@ module SecureRemotePassword
       describe "#get_challenge_and_proof" do
         it "correctly computed publickey" do
           srp_verifier = Verifier.new(3072, :sha512)
-          srp_verifier.set_b SRP.to_big_int(b)
-          res = srp_verifier.get_challenge_and_proof(username, verifier, salt)
-          raise "challange failed" unless res
-          res[:challenge][:B].should eq b_pub
-          res[:proof][:B].should eq b_pub
+          challenge, proof = srp_verifier.get_challenge_and_proof(username, verifier, salt, a_pub, b.to_big_i(16))
+          challenge.proof.should eq b_pub
+          proof.arg_B.should eq b_pub
         end
       end
 
       it " should verify_session" do
-        proof = {
-          b: b,
-          B: b_pub,
-          A: a_pub,
-          I: username,
-          s: salt,
-          v: verifier,
-        }
+        proof = Proof.new(
+          client_A: a_pub,
+          arg_B: b_pub,
+          arg_b: b,
+          username: username,
+          verifier: verifier,
+          salt: salt
+        )
 
         srp_verifier = Verifier.new(3072, :sha512)
         h_amk = srp_verifier.verify_session(proof, client_proof)
-        srp_verifier.s.should eq premaster_secret
-        srp_verifier.big_k.should eq session_key
-        srp_verifier.u.not_nil!.should eq u.to_big_i(16)
-
         h_amk.should eq server_proof
       end
     end
 
     describe Client do
       it "authenticates and verifies the server" do
-        srp_client = Client.new(3072, :sha512)
-        srp_client.set_a SRP.to_big_int(a)
+        srp_client = Client.new(username, password, 3072, :sha512, a.to_big_i(16))
         srp_client.start_authentication.should eq a_pub
-        srp_client.process_challenge(username, password, salt, b_pub).should eq client_proof
+        srp_client.process_challenge(Challenge.new(b_pub, salt)).should eq client_proof
         srp_client.verify(server_proof).should be_truthy
       end
     end
