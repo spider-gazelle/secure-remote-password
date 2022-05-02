@@ -56,7 +56,7 @@ module SecureRemotePassword
       xkk = client.hash_hex(xss)
       xkk.should eq "5844898ea6e5f5d9b737bc0ba2fb9d5edd3f8e67"
       mm = client.calculate_M(username, salt, xaa, xbb, xkk)
-      mm.to_s(16).should eq "2da30b225850c17720ed483ae6d04bcb67e4448e"
+      mm.to_s(16).should eq "f2c0762cd5fdad595689241e3beb9b7178faf33d"
     end
 
     it "should calculate H(AMK)" do

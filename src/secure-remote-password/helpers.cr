@@ -111,14 +111,7 @@ module SecureRemotePassword::Helpers
   end
 
   def hash_hex(h : String) : String
-    case @algorithm
-    in .sha1?
-      # ruby auto pads hex strings on the right hand side, changing the number
-      # not sure if this is intentional for SRP (I copied the Ruby specs)
-      h = "#{h}0" if h.size % 2 > 0
-    in .sha512?
-      h = "0#{h}" if h.size % 2 > 0
-    end
+    h = "0#{h}" if h.size.odd?
     hash_hex(h.hexbytes)
   end
 

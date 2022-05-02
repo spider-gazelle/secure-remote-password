@@ -60,6 +60,7 @@ module SecureRemotePassword
     username = "user"
     password = "password"
     salt = "16ccfa081895fe1ed0bb"
+    a = "7ec87196e320a2f8dfe8979b1992e0d34439d24471b62c40564bb4302866e1c2"
     b = "8143e2f299852a05717427ea9d87c6146e747d0da6e95f4390264e55a43ae96"
 
     it "should calculate k" do
@@ -91,12 +92,18 @@ module SecureRemotePassword
     it "should calculate verifier M and server proof" do
       # A is received in phase 1
       aa = "165366e23a10006a62fb8a0793757a299e2985103ad2e8cdee0cc37cac109f3f338ee12e2440eda97bfa7c75697709a5dc66faadca7806d43ea5839757d134ae7b28dd3333049198cc8d328998b8cd8352ff4e64b3bd5f08e40148d69b0843bce18cbbb30c7e4760296da5c92717fcac8bddc7875f55302e55d90a34226868d2"
+      client = Client.new(username, password, 1024, :sha1, a.to_big_i(16))
+      client.start_authentication
+      client.arg_A.should eq aa
+
       # B and b are saved from phase 1
       bb = "56777d24af1121bd6af6aeb84238ff8d250122fe75ed251db0f47c289642ae7adb9ef319ce3ab23b6ecc97e5904749fc42f12bb016ecf39691db541f066667b8399bfa685c82b03ad8f92f75975ed086dbe0d470d4dd907ce11b19ee41b74aee72bd8445cde6b58c01f678e39ed9cd6b93c79382637df90777a96c10a768c510"
       # v is from db
       v = "321307d87ca3462f5b0cb5df295bea04498563794e5401899b2f32dd5cab5b7de9da78e7d62ea235e6d7f43a4ea09fea7c0dafdee6e79a1d12e2e374048deeaf5ba7c68e2ad952a3f5dc084400a7f1599a31d6d9d50269a9208db88f84090e8aa3c7b019f39529dcc19baa985a8d7ffb2d7628071d2313c9eaabc504d3333688"
+      challenge = Challenge.new(bb, salt)
+      client_m = client.process_challenge challenge
 
-      client_m = "52fb39fcacc2d909675ea3cf2b967980fc40ae0"
+      client_m.should eq "25cd60a3ac491a2938eed3ef2d616bb9c7655978"
       proof = Proof.new(
         client_A: aa,
         arg_B: bb,
@@ -107,7 +114,7 @@ module SecureRemotePassword
       )
       srp = Verifier.new(1024, :sha1)
       h_amk = srp.verify_session(proof, client_m)
-      h_amk.should eq "d3668cebb1cba4b3d4a4cd8edde9d89279b9d1e9"
+      h_amk.should eq "ed12449c49187ae118a5b790178b167f47ac8313"
     end
   end
 end
