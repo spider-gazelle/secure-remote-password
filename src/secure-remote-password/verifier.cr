@@ -73,7 +73,7 @@ class SecureRemotePassword::Verifier
       proof.client_A.to_big_i(16),
       proof.verifier.to_big_i(16),
       u,
-      proof.arg_B.to_big_i(16)
+      proof.arg_b.to_big_i(16)
     ).to_s(16)
     arg_K = hash_hex(arg_S)
 

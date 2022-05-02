@@ -1,103 +1,121 @@
 require "./spec_helper"
 
 module SecureRemotePassword
-  # ## Test Client.
-  # ## Values are from http://srp.stanford.edu/demo/demo.html
-  # ## using 1024 bit values.
   describe Client do
     username = "user"
     password = "password"
     salt = "16ccfa081895fe1ed0bb"
-    a = "7ec87196e320a2f8dfe8979b1992e0d34439d24471b62c40564bb4302866e1c2"
-    _b = "8143e2f299852a05717427ea9d87c6146e747d0da6e95f4390264e55a43ae96"
 
-    it "should generate A from random a" do
-      srp = Client.new(1024, :sha1)
-      aa1 = SRP.to_big_int srp.start_authentication
-      aa1.to_s(2).size.should be >= 1000
-      srp = Client.new(1024, :sha1)
-      aa2 = SRP.to_big_int srp.start_authentication
-      aa2.to_s(2).size.should be >= 1000
-      aa1.should_not eq aa2
+    a = "7ec87196e320a2f8dfe8979b1992e0d34439d24471b62c40564bb4302866e1c2".to_big_i(16)
+    b = "8143e2f299852a05717427ea9d87c6146e747d0da6e95f4390264e55a43ae96".to_big_i(16)
+    client = Client.new(username, password, 1024, :sha1, a)
+    client.custom_group "115b8b692e0e045692cf280b436735c77a5a9e8a9e7ed56c965f87db5b2a2ece3".to_big_i(16), BigInt.new(2)
+
+    it "should calculate k" do
+      client.arg_k.to_s(16).should eq "dbe5dfe0704fee4c85ff106ecd38117d33bcfe50"
     end
 
-    it "should calculate A" do
-      srp = Client.new(1024, :sha1)
-      srp.set_a SRP.to_big_int(a)
-      aa = srp.start_authentication
-      aa.should eq "165366e23a10006a62fb8a0793757a299e2985103ad2e8cdee0cc37cac109f3f338ee12e2440eda97bfa7c75697709a5dc66faadca7806d43ea5839757d134ae7b28dd3333049198cc8d328998b8cd8352ff4e64b3bd5f08e40148d69b0843bce18cbbb30c7e4760296da5c92717fcac8bddc7875f55302e55d90a34226868d2"
+    it "should calculate x" do
+      x = client.calculate_x(salt)
+      x.to_s(16).should eq "bdd0a4e1c9df4082684d8d358b8016301b025375"
     end
 
-    it "should calculate client session and key" do
-      srp = Client.new(1024, :sha1)
-      srp.set_a SRP.to_big_int(a)
-      srp.start_authentication # created in phase 1
-      bb = "56777d24af1121bd6af6aeb84238ff8d250122fe75ed251db0f47c289642ae7adb9ef319ce3ab23b6ecc97e5904749fc42f12bb016ecf39691db541f066667b8399bfa685c82b03ad8f92f75975ed086dbe0d470d4dd907ce11b19ee41b74aee72bd8445cde6b58c01f678e39ed9cd6b93c79382637df90777a96c10a768c510"
-      srp.process_challenge(username, password, salt, bb)
-      srp.s.should eq "7f44592cc616e0d761b2d3309d513b69b386c35f3ed9b11e6d43f15799b673d6dcfa4117b4456af978458d62ad61e1a37be625f46d2a5bd9a50aae359e4541275f0f4bd4b4caed9d2da224b491231f905d47abd9953179aa608854b84a0e0c6195e73715932b41ab8d0d4a2977e7642163be6802c5907fb9e233b8c96e457314"
-      srp.big_k.should eq "404bf923682abeeb3c8c9164d2cdb6b6ba21b64d"
+    it "should calculate verifier" do
+      client.calculate_v(salt).to_s(16).should eq "ce36e101ed8c37ed98ba4e441274dabd1062f3440763eb98bd6058e5400b6309"
+    end
+
+    it "should calculate u" do
+      aa = "b1c4827b0ce416953789db123051ed990023f43b396236b86e12a2c69638fb8e"
+      bb = "fbc56086bb51e26ee1a8287c0a7f3fd4e067e55beb8530b869b10b961957ff68"
+      u = client.calculate_u(aa, bb)
+      u.to_s(16).should eq "c60b17ddf568dd5743d0e3ba5621646b742432c5"
+    end
+
+    it "should calculate public client value A" do
+      aa = client.calculate_A(a)
+      aa.to_s(16).should eq "b1c4827b0ce416953789db123051ed990023f43b396236b86e12a2c69638fb8e"
+    end
+
+    it "should calculate public server value B" do
+      v ="ce36e101ed8c37ed98ba4e441274dabd1062f3440763eb98bd6058e5400b6309".to_big_i(16)
+      bb = client.calculate_B(b, v)
+      bb.to_s(16).should eq "fbc56086bb51e26ee1a8287c0a7f3fd4e067e55beb8530b869b10b961957ff68"
+    end
+
+    it "should calculate session key from client params" do
+      bb = "fbc56086bb51e26ee1a8287c0a7f3fd4e067e55beb8530b869b10b961957ff68".to_big_i(16)
+      u = "c60b17ddf568dd5743d0e3ba5621646b742432c5".to_big_i(16)
+      ss = client.calculate_client_S(bb, salt, u, a)
+      ss.to_s(16).should eq "a606c182e364d2c15f9cdbeeeb63bb00c831d1da65eedc1414f21157d0312a5a"
+    end
+
+    it "should calculate M" do
+      xaa = "b1c4827b0ce416953789db123051ed990023f43b396236b86e12a2c69638fb8e"
+      xbb = "fbc56086bb51e26ee1a8287c0a7f3fd4e067e55beb8530b869b10b961957ff68"
+      xss = "a606c182e364d2c15f9cdbeeeb63bb00c831d1da65eedc1414f21157d0312a5a"
+      xkk = client.hash_hex(xss)
+      xkk.should eq "5844898ea6e5f5d9b737bc0ba2fb9d5edd3f8e67"
+      mm = client.calculate_M(username, salt, xaa, xbb, xkk)
+      mm.to_s(16).should eq "2da30b225850c17720ed483ae6d04bcb67e4448e"
+    end
+
+    it "should calculate H(AMK)" do
+      xaa = "b1c4827b0ce416953789db123051ed990023f43b396236b86e12a2c69638fb8e"
+      xmm = "d597503056af882d5b27b419302ac7b2ea9d7468"
+      xkk = "5844898ea6e5f5d9b737bc0ba2fb9d5edd3f8e67"
+      h_amk = client.calculate_h_amk(xaa, xmm, xkk)
+      h_amk.to_s(16).should eq "ffc955a9227f1bf1d87d66bebecba081f54dbb7a"
     end
   end
 
-  # ## Simulate actual authentication scenario over HTTP
-  # ## when the server is RESTful and has to persist authentication
-  # ## state between challenge and response.
-  context "authentication" do
+  describe "authentication" do
     username = "leonardo"
     password = "icnivad"
-    auth = Verifier.new(1024, :sha1).generate_userauth(username, password)
-    # imitate database persistance layer
-    _user_name = username
-    _user = {
-      verifier: auth[:verifier],
-      salt:     auth[:salt],
-    }
+    verifier = Verifier.new(1024, :sha1)
+
+    # This is our test user database
+    auth = verifier.generate_user_verifier(username, password)
 
     it "should authenticate" do
-      client = Client.new(1024, :sha1)
-      verifier = Verifier.new(1024, :sha1)
+      client = Client.new(username, password, 1024, :sha1)
       # phase 1
       # (client)
-      aa = client.start_authentication
+      client_A = client.start_authentication
       # (server)
-      v = auth[:verifier]
-      salt = auth[:salt]
-      bb = verifier.generate_b v
-      b = verifier.b.to_s(16)
+      challenge, proof = verifier.get_challenge_and_proof(username, auth[:verifier], auth[:salt], client_A)
+
       # phase 2
       # (client)
-      client_m = client.process_challenge(username, "icnivad", salt, bb).not_nil!
+      client_m = client.process_challenge(challenge)
       # (server)
-      _proof = {A: aa, B: bb, b: b, I: username, s: salt, v: v}
-      server_h_amk = verifier.verify_session(_proof, client_m)
+      server_h_amk = verifier.verify_session(proof, client_m)
       server_h_amk.should be_truthy
       # (client)
-      client.h_amk.should eq server_h_amk
+      client.verify(server_h_amk).should be_true
     end
 
     it "should not authenticate" do
-      client = Client.new(1024, :sha1)
-      verifier = Verifier.new(1024, :sha1)
+      client = Client.new(username, "wrongpass", 1024, :sha1)
+
       # phase 1
       # (client)
-      aa = client.start_authentication
+      client_A = client.start_authentication
       # (server)
-      v = auth[:verifier]
-      salt = auth[:salt]
-      bb = verifier.generate_b v
-      b = "%x" % verifier.b
+      challenge, proof = verifier.get_challenge_and_proof(username, auth[:verifier], auth[:salt], client_A)
+
       # phase 2
       # (client)
-      client_m = client.process_challenge(username, "wrong password", salt, bb).not_nil!
+      client_m = client.process_challenge(challenge)
       # (server)
-      _proof = {A: aa, B: bb, b: b, I: username, s: salt, v: v}
-      verifier.verify_session(_proof, client_m).should be_nil
-      verifier.h_amk.should_not be_truthy
+      server_h_amk = verifier.verify_session(proof, client_m)
+      server_h_amk.should be_nil
+      # (client)
+      client.verify(server_h_amk).should be_false
     end
 
     it "should be applied in async authentication with stateless server" do
       # client generates A and begins authentication process
-      client = Client.new(1024, :sha1)
+      client = Client.new(username, password, 1024, :sha1)
       aa = client.start_authentication
 
       #
@@ -105,35 +123,25 @@ module SecureRemotePassword
       #
 
       # server finds user from "database"
-      _user.should_not be_nil
-      v = _user[:verifier]
-      salt = _user[:salt]
+      v = auth[:verifier]
+      salt = auth[:salt]
 
       # server generates B, saves A and B to database
       srp = Verifier.new(1024, :sha1)
-      _session = srp.get_challenge_and_proof(username, v, salt, aa).not_nil!
-      _session[:challenge][:B].should eq srp.big_b
-      _session[:challenge][:salt].should eq salt
-      # store proof to memory
-      _user_session_proof = _session[:proof]
-
-      # server sends salt and B
-      client_response = _session[:challenge]
+      challenge, proof = srp.get_challenge_and_proof(username, v, salt, aa)
+      challenge.proof.should eq proof.arg_B
+      challenge.salt.should eq proof.salt
 
       #
       # client receives B and salt  (server --> client)
       #
-      bb = client_response[:B]
-      salt = client_response[:salt]
+      bb = challenge.proof
+      salt = challenge.salt
       # client generates session key
       # at this point _client_srp.a should be persisted!! calculate_client_key is stateful!
-      mmc = client.process_challenge username, "icnivad", salt, bb
-      client.a.should be_truthy
-      client.m.should eq mmc
-      client.big_k.should be_truthy
-      client.h_amk.should be_truthy
+      client_m = client.process_challenge challenge
+
       # client sends M --> server
-      client_m = client.m
 
       #
       # server receives client session key  (client --> server)
@@ -141,13 +149,12 @@ module SecureRemotePassword
 
       # retrive session from database
       srp = Verifier.new(1024, :sha1)
-      verification = srp.verify_session(_user_session_proof, client_m)
+      verification = srp.verify_session(proof, client_m)
       verification.should_not be_nil
 
       # Now the two parties have a shared, strong session key K.
       # To complete authentication, they need to prove to each other that their keys match.
       client.verify(verification).should eq true
-      verification.should eq client.h_amk
     end
   end
 end

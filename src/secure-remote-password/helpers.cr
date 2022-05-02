@@ -59,26 +59,24 @@ module SecureRemotePassword::Helpers
 
   # Server secret
   # S = (A * v^u) ^ b % N
-  def calculate_server_S(arg_A : BigInt, v : BigInt, u : BigInt, arg_B : BigInt) : BigInt
+  def calculate_server_S(arg_A : BigInt, v : BigInt, u : BigInt, arg_b : BigInt) : BigInt
     raise "ABORT: illegal_parameter A" if arg_A % arg_N == 0
-    raise "ABORT: illegal_parameter B" if arg_B % arg_N == 0
-    modpow((modpow(v, u, arg_N) * arg_A), arg_B, arg_N)
-    # modpow((modpow(v, u, arg_N) * arg_A) % arg_N, arg_B, arg_N)
+    modpow((modpow(v, u, arg_N) * arg_A), arg_b, arg_N)
   end
 
   # M = H(H(N) xor H(g), H(I), s, A, B, K)
-  def calculate_M(username : String, xsalt : String, xaa, xbb, xkk) : BigInt
+  def calculate_M(username : String, salt : String, xaa, xbb, xkk) : BigInt
     hn = hash(@arg_N.to_s(16))
     hg = hash(@arg_g.to_s(16))
     hxor = (hn ^ hg).to_s(16)
     hi = hash_string(username)
 
-    # Differences in padding requirements for apples extension
+    # Differences in padding requirements?
     case @algorithm
     in .sha1?
-      padded_hash(hxor, hi, xsalt, xaa, xbb, xkk)
+      padded_hash(hxor, hi, salt, xaa, xbb, xkk)
     in .sha512?
-      no_padding_hash(hxor, hi, xsalt, xaa, xbb, xkk)
+      no_padding_hash(hxor, hi, salt, xaa, xbb, xkk)
     end
   end
 
@@ -112,10 +110,16 @@ module SecureRemotePassword::Helpers
     end
   end
 
-  def hash_hex(hex_string : String) : String
-    # hexbytes raises an error if there are not an even number of nibbles
-    hex_string = "0#{hex_string}" if hex_string.size.odd?
-    hash_hex(hex_string.hexbytes)
+  def hash_hex(h : String) : String
+    case @algorithm
+    in .sha1?
+      # ruby auto pads hex strings on the right hand side, changing the number
+      # not sure if this is intentional for SRP (I copied the Ruby specs)
+      h = "#{h}0" if h.size % 2 > 0
+    in .sha512?
+      h = "0#{h}" if h.size % 2 > 0
+    end
+    hash_hex(h.hexbytes)
   end
 
   def hash_string(string : String) : String
