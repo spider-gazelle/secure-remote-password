@@ -1,5 +1,7 @@
 # Secure Remote Password for Crystal Lang
 
+[![CI](https://github.com/spider-gazelle/secure-remote-password/actions/workflows/ci.yml/badge.svg)](https://github.com/spider-gazelle/secure-remote-password/actions/workflows/ci.yml)
+
 This is a pure Crystal implementation of the Secure Remote Password protocol (SRP-6a).
 
 SRP is an authentication method that allows the use of user names and passwords over an insecure network connection without revealing the password. If the client side lacks the user's password or the server side lacks the proper verification key, the authentication will fail.
