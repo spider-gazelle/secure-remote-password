@@ -37,7 +37,7 @@ module SecureRemotePassword
     end
 
     it "should calculate public server value B" do
-      v ="ce36e101ed8c37ed98ba4e441274dabd1062f3440763eb98bd6058e5400b6309".to_big_i(16)
+      v = "ce36e101ed8c37ed98ba4e441274dabd1062f3440763eb98bd6058e5400b6309".to_big_i(16)
       bb = client.calculate_B(b, v)
       bb.to_s(16).should eq "fbc56086bb51e26ee1a8287c0a7f3fd4e067e55beb8530b869b10b961957ff68"
     end
@@ -135,8 +135,6 @@ module SecureRemotePassword
       #
       # client receives B and salt  (server --> client)
       #
-      bb = challenge.proof
-      salt = challenge.salt
       # client generates session key
       # at this point _client_srp.a should be persisted!! calculate_client_key is stateful!
       client_m = client.process_challenge challenge

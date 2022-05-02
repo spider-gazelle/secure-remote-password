@@ -16,11 +16,6 @@ module SecureRemotePassword
     aa = client.calculate_A(a)
     u = client.calculate_u(aa, bb)
     s = client.calculate_client_S(bb, salt, u, a)
-    kk = client.hash_hex(s.to_s(16))
-    mm = client.calculate_M(username, salt, aa, bb, kk)
-
-    # Server side
-    ss = client.calculate_server_S(aa, v, u, bb)
 
     it "should calculate k" do
       client.arg_k.to_s(16, upcase: true).should eq "7556AA045AEF2CDD07ABAF0F665C3E818913186F"
