@@ -1,89 +1,86 @@
-require "./srp"
+require "./challenge"
+require "./helpers"
+require "./proof"
 
 class SecureRemotePassword::Verifier
-  def initialize(group = 3072, algorithm : SRP::Algorithm = SRP::Algorithm::SHA512)
-    @srp = srp = SRP.new(algorithm)
-    # select modulus (N) and generator (g)
-    @n, @g = srp.ng group
-    @k = srp.calc_k(@n, @g)
-    @b = srp.bigrand(32)
+  include Helpers
+
+  getter arg_N : BigInt
+  getter arg_g : BigInt
+  getter arg_k : BigInt
+
+  getter algorithm : Algorithm
+
+  def initialize(
+    @group : Int32,
+    @algorithm : Algorithm = Algorithm::SHA512,
+    salt_size : Int32? = nil
+  )
+    @salt_size = salt_size || case @algorithm
+    in .sha1?
+      10
+    in .sha512?
+      16
+    end
+
+    # Set N and g from initialization values.
+    @arg_N, @arg_g = initialization_value(@group)
+
+    # Pre-compute k from N and g.
+    @arg_k = calculate_k
   end
 
-  getter n : BigInt
-  getter g : BigInt
-  getter k : BigInt
-  getter b : BigInt
-  getter u : BigInt? = nil
-
-  getter big_k : String = ""
-  getter big_b : String = ""
-  getter a : String = ""
-  getter s : String = ""
-  getter m : String = ""
-  getter h_amk : String? = nil
-
-  private getter salt : String { @srp.bigrand_hex(@srp.salt_size) }
-
   # Initial user creation for the persistance layer.
-  # Not part of the authentication process.
+  # Not part of the authentication process. Salt should only be provided for testing
   # Returns { <username>, <password verifier>, <salt> }
-  def generate_userauth(username, password)
-    x = @srp.calc_x(username, password, salt)
-    v = @srp.calc_v(x, @n, @g)
-    {username: username, verifier: v.to_hex_string, salt: salt}
+  def generate_user_verifier(username : String, password : String, salt = random_hex(@salt_size))
+    {username: username, verifier: calculate_v(username, password, salt).to_s(16), salt: salt}
   end
 
   # Authentication phase 1 - create challenge.
   # Returns Hash with challenge for client and proof to be stored on server.
   # Parameters should be given in hex.
-  def get_challenge_and_proof(username : String, xverifier : String, xsalt : String, xaa : String? = nil)
+  def get_challenge_and_proof(username : String, verifier : String, salt : String, client_A : String, arg_b : BigInt = random_big_int(32))
     # SRP-6a safety check
-    return nil if xaa && (@srp.to_big_int(xaa) % @n) == 0
-    generate_b(xverifier)
+    raise "ABORT: invalid client A" if (client_A.to_big_i(16) % @arg_N) == 0
+    arg_B = calculate_B(arg_b, verifier.to_big_i(16)).to_s(16)
     {
-      challenge: {:B => @big_b, :salt => xsalt},
-      proof:     {
-        A: xaa, B: @big_b, b: @b.to_hex_string,
-        I: username, s: xsalt, v: xverifier,
-      },
+      # Provide this to the client
+      Challenge.new(proof: arg_B, salt: salt),
+
+      # Store this for verifying the current session
+      Proof.new(
+        client_A: client_A,
+        arg_B: arg_B,
+        arg_b: arg_b.to_s(16),
+        username: username,
+        verifier: verifier,
+        salt: salt
+      ),
     }
   end
 
   # returns H_AMK on success, None on failure
   # User -> Host:  M = H(H(N) xor H(g), H(I), s, A, B, K)
   # Host -> User:  H(A, M, K)
-  def verify_session(proof, client_m : String)
-    srp = @srp
-    @a = proof[:A]
-    @big_b = proof[:B]
-    @b = srp.to_big_int proof[:b]
-    username = proof[:I]
-    xsalt = proof[:s]
-    v = srp.to_big_int proof[:v]
-
-    @u = u = srp.calc_u(@a, @big_b, @n)
+  def verify_session(proof : Proof, client_m : String)
+    u = calculate_u(proof.client_A, proof.arg_B)
     # SRP-6a safety check
-    return nil if u == 0
+    raise "ABORT: illegal_parameter u" if u == 0
 
     # calculate session key
-    @s = srp.calc_server_s(srp.to_big_int(@a), @b, v, u, @n).to_hex_string
-    @big_k = srp.hash_hex(@s)
+    arg_S = calculate_server_S(
+      proof.client_A.to_big_i(16),
+      proof.verifier.to_big_i(16),
+      u,
+      proof.arg_B.to_big_i(16)
+    ).to_s(16)
+    arg_K = hash_hex(arg_S)
 
     # calculate match
-    @m = srp.calc_m(username, xsalt, @a, @big_b, @big_k, @n, @g).to_hex_string
+    match = calculate_M(proof.username, proof.salt, proof.client_A, proof.arg_B, arg_K).to_s(16)
 
-    if @m == client_m
-      # authentication succeeded
-      @h_amk = srp.calc_h_amk(@a, @m, @big_k, @n).to_hex_string
-      return @h_amk
-    end
-    nil
-  end
-
-  # generates challenge
-  # input verifier in hex
-  def generate_b(xverifier : String)
-    v = SRP.to_big_int(xverifier)
-    @big_b = @srp.calc_b(@b, k, v, @n, @g).to_hex_string
+    return nil unless match == client_m
+    calculate_h_amk(proof.client_A, match, arg_K).to_s(16)
   end
 end

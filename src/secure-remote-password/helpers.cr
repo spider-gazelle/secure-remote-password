@@ -10,27 +10,34 @@ module SecureRemotePassword::Helpers
   end
 
   # Calculate x = SHA1(s | SHA1(I | ":" | P))
-  def calculate_x(salt : String)
+  def calculate_x(salt : String, username : String = @username, password : String = @password)
     pad = salt.bytesize.odd? ? '0' : nil
-    hash("#{pad}#{salt}#{hash_string("#{@username}:#{@password}")}")
+    hash("#{pad}#{salt}#{hash_string("#{username}:#{password}")}")
   end
 
   # Calculate v = g^x % N
-  def calculate_v(salt : String)
+  def calculate_v(salt : String) : BigInt
     modpow(arg_g, calculate_x(salt), arg_N)
+  end
+
+  # verifier version
+  def calculate_v(username : String, password : String, salt : String) : BigInt
+    modpow(arg_g, calculate_x(salt, username, password), arg_N)
   end
 
   # Calculate u = SHA1(PAD(A) | PAD(B)), which serves
   # to prevent an attacker who learns a user's verifier
   # from being able to authenticate as that user.
-  def calculate_u(arg_A, arg_B)
-    padded_hash(arg_N, arg_A, arg_B)
+  def calculate_u(arg_A, arg_B) : BigInt
+    raise "ABORT: illegal_parameter A" if arg_A % arg_N == 0
+    raise "ABORT: illegal_parameter B" if arg_B % arg_N == 0
+    padded_hash(arg_A, arg_B)
   end
 
   # Calculate the client's public value A = g^a % N
   # where param 'a' is a random number at least 256 bits in length
-  def calculate_A(a : BigInt)
-    raise "Client key length is less than 256 bits." unless (a.bit_length / 8 >= 256 / 8)
+  def calculate_A(a : BigInt) : BigInt
+    raise "Client key length is less than 256 bits." unless ((a.bit_length / 8).ceil >= (256 / 8))
     big_A = modpow(arg_g, a, arg_N)
     raise "ABORT: illegal_parameter a" if big_A % arg_N == 0
     big_A
@@ -38,32 +45,33 @@ module SecureRemotePassword::Helpers
 
   # Calculate the server's public value B
   # B = g^b + k v (mod N)
-  def calculate_B(b, v)
+  def calculate_B(b : BigInt, v : BigInt) : BigInt
     (modpow(arg_g, b, arg_N) + arg_k * v) % arg_N
   end
 
   # Client secret
   # S = (B - (k * g^x)) ^ (a + (u * x)) % N
-  def calculate_client_S(big_B, salt, uu, aa)
-    raise "ABORT: illegal_parameter B" if big_B % arg_N == 0
+  def calculate_client_S(arg_B : BigInt, salt : String, uu : BigInt, a : BigInt) : BigInt
+    raise "ABORT: illegal_parameter B" if arg_B % arg_N == 0
     x = calculate_x(salt)
-    modpow((big_B - arg_k * modpow(arg_g, x, arg_N)) % arg_N, (aa + x * uu), arg_N)
+    modpow((arg_B - arg_k * modpow(arg_g, x, arg_N)) % arg_N, (a + x * uu), arg_N)
   end
 
   # Server secret
   # S = (A * v^u) ^ b % N
-  def calculate_server_S(big_A, v, u, big_B)
-    raise "ABORT: illegal_parameter A" if big_A % arg_N == 0
-    raise "ABORT: illegal_parameter B" if big_B % arg_N == 0
-    modpow((modpow(v, u, arg_N) * big_A), big_B, arg_N)
+  def calculate_server_S(arg_A : BigInt, v : BigInt, u : BigInt, arg_B : BigInt) : BigInt
+    raise "ABORT: illegal_parameter A" if arg_A % arg_N == 0
+    raise "ABORT: illegal_parameter B" if arg_B % arg_N == 0
+    modpow((modpow(v, u, arg_N) * arg_A), arg_B, arg_N)
+    # modpow((modpow(v, u, arg_N) * arg_A) % arg_N, arg_B, arg_N)
   end
 
   # M = H(H(N) xor H(g), H(I), s, A, B, K)
-  def calculate_M(xsalt : String, xaa, xbb, xkk) : BigInt
+  def calculate_M(username : String, xsalt : String, xaa, xbb, xkk) : BigInt
     hn = hash(@arg_N.to_s(16))
     hg = hash(@arg_g.to_s(16))
     hxor = (hn ^ hg).to_s(16)
-    hi = hash_string(@username)
+    hi = hash_string(username)
 
     # Differences in padding requirements for apples extension
     case @algorithm
@@ -74,9 +82,19 @@ module SecureRemotePassword::Helpers
     end
   end
 
+  # H(A, M, K) for final client validation
+  def calculate_h_amk(xaa, xmm, xkk)
+    case @algorithm
+    in .sha1?
+      padded_hash(xaa, xmm, xkk)
+    in .sha512?
+      no_padding_hash(xaa, xmm, xkk)
+    end
+  end
+
   # a^n (mod m)
-  def modpow(a : BigInt, n : BigInt, m : BigInt)
-    r = 1
+  def modpow(a : BigInt, n : BigInt, m : BigInt) : BigInt
+    r = BigInt.new(1)
     loop do
       r = r * a % m if n.bit(0) == 1
       n >>= 1
@@ -135,16 +153,16 @@ module SecureRemotePassword::Helpers
   def initialization_value(group : Int) : Tuple(BigInt, BigInt)
     case group
     when 1024
-      n = to_big_int %w{
+      n = %w{
         EEAF0AB9 ADB38DD6 9C33F80A FA8FC5E8 60726187 75FF3C0B 9EA2314C
         9C256576 D674DF74 96EA81D3 383B4813 D692C6E0 E0D5D8E2 50B98BE4
         8E495C1D 6089DAD1 5DC7D7B4 6154D6B6 CE8EF4AD 69B15D49 82559B29
         7BCF1885 C529F566 660E57EC 68EDBC3C 05726CC0 2FD4CBF4 976EAA9A
         FD5138FE 8376435B 9FC61D2F C0EB06E3
-      }.join
+      }.join.to_big_i(16)
       g = BigInt.new 2
     when 1536
-      n = to_big_int %w{
+      n = %w{
         9DEF3CAF B939277A B1F12A86 17A47BBB DBA51DF4 99AC4C80 BEEEA961
         4B19CC4D 5F4F5F55 6E27CBDE 51C6A94B E4607A29 1558903B A0D0F843
         80B655BB 9A22E8DC DF028A7C EC67F0D0 8134B1C8 B9798914 9B609E0B
@@ -152,10 +170,10 @@ module SecureRemotePassword::Helpers
         6EDF0195 39349627 DB2FD53D 24B7C486 65772E43 7D6C7F8C E442734A
         F7CCB7AE 837C264A E3A9BEB8 7F8A2FE9 B8B5292E 5A021FFF 5E91479E
         8CE7A28C 2442C6F3 15180F93 499A234D CF76E3FE D135F9BB
-      }.join
+      }.join.to_big_i(16)
       g = BigInt.new 2
     when 2048
-      n = to_big_int %w{
+      n = %w{
         AC6BDB41 324A9A9B F166DE5E 1389582F AF72B665 1987EE07 FC319294
         3DB56050 A37329CB B4A099ED 8193E075 7767A13D D52312AB 4B03310D
         CD7F48A9 DA04FD50 E8083969 EDB767B0 CF609517 9A163AB3 661A05FB
@@ -166,10 +184,10 @@ module SecureRemotePassword::Helpers
         03CE5329 9CCC041C 7BC308D8 2A5698F3 A8D0C382 71AE35F8 E9DBFBB6
         94B5C803 D89F7AE4 35DE236D 525F5475 9B65E372 FCD68EF2 0FA7111F
         9E4AFF73
-      }.join
+      }.join.to_big_i(16)
       g = BigInt.new 2
     when 3072
-      n = to_big_int %w{
+      n = %w{
         FFFFFFFF FFFFFFFF C90FDAA2 2168C234 C4C6628B 80DC1CD1 29024E08
         8A67CC74 020BBEA6 3B139B22 514A0879 8E3404DD EF9519B3 CD3A431B
         302B0A6D F25F1437 4FE1356D 6D51C245 E485B576 625E7EC6 F44C42E9
@@ -184,10 +202,10 @@ module SecureRemotePassword::Helpers
         1AD2EE6B F12FFA06 D98A0864 D8760273 3EC86A64 521F2B18 177B200C
         BBE11757 7A615D6C 770988C0 BAD946E2 08E24FA0 74E5AB31 43DB5BFC
         E0FD108E 4B82D120 A93AD2CA FFFFFFFF FFFFFFFF
-      }.join
+      }.join.to_big_i(16)
       g = BigInt.new 5
     when 4096
-      n = to_big_int %w{
+      n = %w{
         FFFFFFFF FFFFFFFF C90FDAA2 2168C234 C4C6628B 80DC1CD1 29024E08
         8A67CC74 020BBEA6 3B139B22 514A0879 8E3404DD EF9519B3 CD3A431B
         302B0A6D F25F1437 4FE1356D 6D51C245 E485B576 625E7EC6 F44C42E9
@@ -207,10 +225,10 @@ module SecureRemotePassword::Helpers
         233BA186 515BE7ED 1F612970 CEE2D7AF B81BDD76 2170481C D0069127
         D5B05AA9 93B4EA98 8D8FDDC1 86FFB7DC 90A6C08F 4DF435C9 34063199
         FFFFFFFF FFFFFFFF
-      }.join
+      }.join.to_big_i(16)
       g = BigInt.new 5
     when 6144
-      n = to_big_int %w{
+      n = %w{
         FFFFFFFF FFFFFFFF C90FDAA2 2168C234 C4C6628B 80DC1CD1 29024E08
         8A67CC74 020BBEA6 3B139B22 514A0879 8E3404DD EF9519B3 CD3A431B
         302B0A6D F25F1437 4FE1356D 6D51C245 E485B576 625E7EC6 F44C42E9
@@ -239,10 +257,10 @@ module SecureRemotePassword::Helpers
         B7C5DA76 F550AA3D 8A1FBFF0 EB19CCB1 A313D55C DA56C9EC 2EF29632
         387FE8D7 6E3C0468 043E8F66 3F4860EE 12BF2D5B 0B7474D6 E694F91E
         6DCC4024 FFFFFFFF FFFFFFFF
-      }.join
+      }.join.to_big_i(16)
       g = BigInt.new 5
     when 8192
-      n = to_big_int %w{
+      n = %w{
         FFFFFFFF FFFFFFFF C90FDAA2 2168C234 C4C6628B 80DC1CD1 29024E08
         8A67CC74 020BBEA6 3B139B22 514A0879 8E3404DD EF9519B3 CD3A431B
         302B0A6D F25F1437 4FE1356D 6D51C245 E485B576 625E7EC6 F44C42E9
@@ -280,7 +298,7 @@ module SecureRemotePassword::Helpers
         359046F4 EB879F92 4009438B 481C6CD7 889A002E D5EE382B C9190DA6
         FC026E47 9558E447 5677E9AA 9E3050E2 765694DF C81F56E8 80B96E71
         60C980DD 98EDD3DF FFFFFFFF FFFFFFFF
-      }.join
+      }.join.to_big_i(16)
       g = BigInt.new 19
     else
       raise NotImplementedError.new("unknown group size: #{group}")
@@ -294,6 +312,6 @@ module SecureRemotePassword::Helpers
   end
 
   def random_big_int(bytes : Int) : BigInt
-    bigrand_hex(bytes).to_big_i(16)
+    random_hex(bytes).to_big_i(16)
   end
 end

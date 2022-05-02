@@ -1,0 +1,4 @@
+Style/VariableNames:
+  Enabled: false
+Style/MethodNames:
+  Enabled: false
